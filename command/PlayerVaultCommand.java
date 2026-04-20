@@ -87,9 +87,13 @@ public class PlayerVaultCommand implements CommandExecutor, TabCompleter {
     }
 
     private OfflinePlayer findPlayer(String input) {
-        Player online = Bukkit.getPlayerExact(input);
-        if (online != null) {
-            return online;
+        if (input == null || input.isBlank()) {
+            return null;
+        }
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (online.getName() != null && online.getName().equalsIgnoreCase(input)) {
+                return online;
+            }
         }
         for (OfflinePlayer offline : Bukkit.getOfflinePlayers()) {
             if (offline.getName() == null || !offline.getName().equalsIgnoreCase(input)) {
@@ -123,7 +127,7 @@ public class PlayerVaultCommand implements CommandExecutor, TabCompleter {
             return this.filter(completions, args[0]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("view") && this.vaultService.isAdmin(sender)) {
-            return this.filter(Bukkit.getOnlinePlayers().stream().map(Player::getName).collect(Collectors.toList()), args[1]);
+            return this.filter(this.allPlayerNames(), args[1]);
         }
         if (args.length == 3 && args[0].equalsIgnoreCase("view") && this.vaultService.isAdmin(sender)) {
             List<String> completions = new ArrayList<String>();
@@ -138,5 +142,20 @@ public class PlayerVaultCommand implements CommandExecutor, TabCompleter {
     private List<String> filter(List<String> values, String input) {
         String needle = input.toLowerCase(Locale.ROOT);
         return values.stream().distinct().filter(value -> value.toLowerCase(Locale.ROOT).startsWith(needle)).sorted().collect(Collectors.toList());
+    }
+
+    private List<String> allPlayerNames() {
+        List<String> names = new ArrayList<String>();
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (player.getName() != null) {
+                names.add(player.getName());
+            }
+        }
+        for (OfflinePlayer player : Bukkit.getOfflinePlayers()) {
+            if (player.getName() != null) {
+                names.add(player.getName());
+            }
+        }
+        return names;
     }
 }

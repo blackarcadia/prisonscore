@@ -37,7 +37,7 @@ implements CommandExecutor {
         switch (sub = args[0].toLowerCase()) {
             case "give": {
                 Player p;
-                Player target = null;
+                Player target;
                 int amount = 1;
                 if (!this.hasGive(sender)) {
                     sender.sendMessage(Text.color("&cNo permission."));
@@ -56,6 +56,8 @@ implements CommandExecutor {
                     target = Bukkit.getPlayer((String)args[2]);
                 } else if (sender instanceof Player) {
                     target = p = (Player)sender;
+                } else {
+                    target = null;
                 }
                 if (target == null) {
                     sender.sendMessage(Text.color("&cPlayer not found."));
@@ -74,7 +76,11 @@ implements CommandExecutor {
                 while (remaining > 0) {
                     ItemStack shard = this.shardService.createShard(tier);
                     shard.setAmount(Math.min(remaining, shard.getMaxStackSize()));
-                    target.getInventory().addItem(new ItemStack[]{shard});
+                    if (this.shardService.getPlugin().getStashService() != null) {
+                        this.shardService.getPlugin().getStashService().giveOrStash(target, shard);
+                    } else {
+                        target.getInventory().addItem(new ItemStack[]{shard}).values().forEach(stack -> target.getWorld().dropItemNaturally(target.getLocation(), stack));
+                    }
                     remaining -= shard.getAmount();
                 }
                 sender.sendMessage(Text.color("&aGiven " + amount + " fragment(s) to " + target.getName()));

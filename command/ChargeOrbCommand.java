@@ -66,13 +66,22 @@ implements CommandExecutor {
             return true;
         }
         if (slotToken) {
-            target.getInventory().addItem(new ItemStack[]{this.chargeOrbService.createSlotToken()});
+            ItemStack token = this.chargeOrbService.createSlotToken();
+            if (this.plugin.getStashService() != null) {
+                this.plugin.getStashService().giveOrStash(target, token);
+            } else {
+                target.getInventory().addItem(new ItemStack[]{token}).values().forEach(stack -> target.getWorld().dropItemNaturally(target.getLocation(), stack));
+            }
             sender.sendMessage(Text.color("&aGave a charge slot token to " + target.getName()));
         } else {
-            target.getInventory().addItem(new ItemStack[]{this.chargeOrbService.createOrb(percent)});
+            ItemStack orb = this.chargeOrbService.createOrb(percent);
+            if (this.plugin.getStashService() != null) {
+                this.plugin.getStashService().giveOrStash(target, orb);
+            } else {
+                target.getInventory().addItem(new ItemStack[]{orb}).values().forEach(stack -> target.getWorld().dropItemNaturally(target.getLocation(), stack));
+            }
             sender.sendMessage(Text.color("&aGave a " + percent + "% charge orb to " + target.getName()));
         }
         return true;
     }
 }
-

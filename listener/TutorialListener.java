@@ -2,6 +2,7 @@ package org.axial.prisonsCore.listener;
 
 import java.util.Iterator;
 import java.util.Set;
+import org.axial.prisonsCore.service.PlayerToggleService;
 import org.axial.prisonsCore.service.TutorialService;
 import org.axial.prisonsCore.util.Text;
 import org.bukkit.entity.Player;
@@ -16,9 +17,11 @@ import org.bukkit.event.player.PlayerTeleportEvent;
 
 public class TutorialListener implements Listener {
     private final TutorialService tutorialService;
+    private final PlayerToggleService toggleService;
 
-    public TutorialListener(TutorialService tutorialService) {
+    public TutorialListener(TutorialService tutorialService, PlayerToggleService toggleService) {
         this.tutorialService = tutorialService;
+        this.toggleService = toggleService;
     }
 
     @EventHandler(priority=EventPriority.HIGHEST)
@@ -37,7 +40,7 @@ public class TutorialListener implements Listener {
         Iterator<Player> iterator = recipients.iterator();
         while (iterator.hasNext()) {
             Player recipient = iterator.next();
-            if (!recipient.equals((Object)event.getPlayer()) && this.tutorialService.shouldFilterChat(recipient)) {
+            if (!recipient.equals((Object)event.getPlayer()) && (this.tutorialService.shouldFilterChat(recipient) || !this.canSeeChat(recipient))) {
                 iterator.remove();
             }
         }
@@ -61,5 +64,9 @@ public class TutorialListener implements Listener {
             return;
         }
         this.tutorialService.handleShardMenuClosed((Player)event.getPlayer());
+    }
+
+    private boolean canSeeChat(Player player) {
+        return this.toggleService == null || this.toggleService.canReceiveChat(player);
     }
 }

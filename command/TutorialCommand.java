@@ -1,6 +1,8 @@
 package org.axial.prisonsCore.command;
 
 import org.axial.prisonsCore.service.TutorialService;
+import org.axial.prisonsCore.service.PlayerToggleService;
+import org.axial.prisonsCore.service.PlayerToggleService.Toggle;
 import org.axial.prisonsCore.util.Text;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -9,9 +11,11 @@ import org.bukkit.entity.Player;
 
 public class TutorialCommand implements CommandExecutor {
     private final TutorialService tutorialService;
+    private final PlayerToggleService toggleService;
 
-    public TutorialCommand(TutorialService tutorialService) {
+    public TutorialCommand(TutorialService tutorialService, PlayerToggleService toggleService) {
         this.tutorialService = tutorialService;
+        this.toggleService = toggleService;
     }
 
     @Override
@@ -31,6 +35,10 @@ public class TutorialCommand implements CommandExecutor {
             return true;
         }
         if (args.length > 1 && args[1].equalsIgnoreCase("confirm")) {
+            this.tutorialService.skip(player);
+            return true;
+        }
+        if (this.toggleService != null && !this.toggleService.isEnabled(player, Toggle.TUTORIAL_SKIP_CONFIRM)) {
             this.tutorialService.skip(player);
             return true;
         }

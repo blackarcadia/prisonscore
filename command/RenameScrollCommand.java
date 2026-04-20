@@ -57,7 +57,11 @@ TabCompleter {
         }
         ItemStack scroll = this.renameScrollService.createScroll();
         scroll.setAmount(amount);
-        target.getInventory().addItem(new ItemStack[]{scroll});
+        if (this.renameScrollService.getPlugin().getStashService() != null) {
+            this.renameScrollService.getPlugin().getStashService().giveOrStash(target, scroll);
+        } else {
+            target.getInventory().addItem(new ItemStack[]{scroll}).values().forEach(stack -> target.getWorld().dropItemNaturally(target.getLocation(), stack));
+        }
         sender.sendMessage(Text.color("&aGave &f" + amount + " &aRename Scroll(s) to &f" + target.getName() + "&a."));
         return true;
     }
@@ -74,4 +78,3 @@ TabCompleter {
         return list;
     }
 }
-

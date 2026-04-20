@@ -24,6 +24,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 
 public class GuardCommand
 implements CommandExecutor,
@@ -41,6 +42,7 @@ TabCompleter {
         }
         if (args.length == 0) {
             sender.sendMessage(Text.color("&eUsage: /guard spawn <id> [name]"));
+            sender.sendMessage(Text.color("&e       /guard spawner <id> [amount]"));
             sender.sendMessage(Text.color("&e       /guard reload"));
             return true;
         }
@@ -72,6 +74,42 @@ TabCompleter {
                 }
                 return true;
             }
+            case "spawner": {
+                if (!(sender instanceof Player)) {
+                    sender.sendMessage("Only players can receive guard spawners.");
+                    return true;
+                }
+                Player player = (Player)sender;
+                if (args.length < 2) {
+                    sender.sendMessage(Text.color("&cSpecify guard id."));
+                    return true;
+                }
+                GuardService.GuardTemplate template = this.guardService.getTemplate(args[1]);
+                if (template == null) {
+                    sender.sendMessage(Text.color("&cUnknown guard id."));
+                    return true;
+                }
+                int amount = 1;
+                if (args.length >= 3) {
+                    try {
+                        amount = Math.max(1, Integer.parseInt(args[2]));
+                    }
+                    catch (NumberFormatException ex) {
+                        sender.sendMessage(Text.color("&cInvalid amount."));
+                        return true;
+                    }
+                }
+                ItemStack spawner = this.guardService.createGuardSpawnerItem(args[1]);
+                if (spawner == null) {
+                    sender.sendMessage(Text.color("&cFailed to create guard spawner."));
+                    return true;
+                }
+                for (int i = 0; i < amount; ++i) {
+                    player.getInventory().addItem(spawner.clone());
+                }
+                sender.sendMessage(Text.color("&aGiven &f" + amount + " &aguard spawner(s) for &f" + args[1].toLowerCase(Locale.ROOT) + "&a."));
+                return true;
+            }
         }
         sender.sendMessage(Text.color("&cUnknown subcommand."));
         return true;
@@ -82,12 +120,14 @@ TabCompleter {
             return List.of();
         }
         if (args.length == 1) {
-            return List.of("spawn", "reload").stream().filter(s -> s.startsWith(args[0].toLowerCase(Locale.ROOT))).collect(Collectors.toList());
+            return List.of("spawn", "spawner", "reload").stream().filter(s -> s.startsWith(args[0].toLowerCase(Locale.ROOT))).collect(Collectors.toList());
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("spawn")) {
+            return this.guardService.ids().stream().filter(id -> id.startsWith(args[1].toLowerCase(Locale.ROOT))).collect(Collectors.toList());
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("spawner")) {
             return this.guardService.ids().stream().filter(id -> id.startsWith(args[1].toLowerCase(Locale.ROOT))).collect(Collectors.toList());
         }
         return new ArrayList<String>();
     }
 }
-

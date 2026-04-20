@@ -52,7 +52,7 @@ implements Listener {
         if (this.guardService.isGuard(event.getEntity())) {
             return;
         }
-        double dist = this.guardService.nearestGuardDistance(damager.getLocation(), 10.0);
+        double dist = this.guardService.nearestGuardDistance(damager.getLocation(), GuardService.GUARD_PROTECTION_RANGE);
         if (dist < 0.0) {
             return;
         }
@@ -102,4 +102,3 @@ implements Listener {
         }
     }
 }
-

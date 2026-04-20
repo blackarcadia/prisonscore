@@ -96,6 +96,10 @@ public final class Keys {
         return new NamespacedKey((Plugin)plugin, "gear-energy");
     }
 
+    public static NamespacedKey gearLevel(PrisonsCore plugin) {
+        return new NamespacedKey((Plugin)plugin, "gear-level");
+    }
+
     public static NamespacedKey gearEnchants(PrisonsCore plugin) {
         return new NamespacedKey((Plugin)plugin, "gear-enchants");
     }
@@ -222,6 +226,22 @@ public final class Keys {
 
     public static NamespacedKey guardCustomName(PrisonsCore plugin) {
         return new NamespacedKey((Plugin)plugin, "guard-custom-name");
+    }
+
+    public static NamespacedKey guardSpawner(PrisonsCore plugin) {
+        return new NamespacedKey((Plugin)plugin, "guard-spawner");
+    }
+
+    public static NamespacedKey guardSpawnerType(PrisonsCore plugin) {
+        return new NamespacedKey((Plugin)plugin, "guard-spawner-type");
+    }
+
+    public static NamespacedKey harbourerBoss(PrisonsCore plugin) {
+        return new NamespacedKey((Plugin)plugin, "harbourer-boss");
+    }
+
+    public static NamespacedKey harbourerRing(PrisonsCore plugin) {
+        return new NamespacedKey((Plugin)plugin, "harbourer-ring");
     }
 
     private Keys() {

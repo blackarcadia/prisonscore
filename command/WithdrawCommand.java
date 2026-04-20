@@ -40,9 +40,13 @@ public class WithdrawCommand implements CommandExecutor {
             return true;
         }
         ItemStack note = this.bankNoteService.createBankNote(amount);
-        Map<Integer, ItemStack> leftover = player.getInventory().addItem(note);
-        for (ItemStack stack : leftover.values()) {
-            player.getWorld().dropItemNaturally(player.getLocation(), stack);
+        if (this.economyService.getPlugin().getStashService() != null) {
+            this.economyService.getPlugin().getStashService().giveOrStash(player, note);
+        } else {
+            Map<Integer, ItemStack> leftover = player.getInventory().addItem(note);
+            for (ItemStack stack : leftover.values()) {
+                player.getWorld().dropItemNaturally(player.getLocation(), stack);
+            }
         }
         player.sendMessage(Lang.msg("economy.withdraw-success", "&aWithdrew &2{amount} &ainto a bank note.").replace("{amount}", this.economyService.format(amount)));
         return true;

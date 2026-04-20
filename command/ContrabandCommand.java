@@ -22,7 +22,7 @@ public class ContrabandCommand implements CommandExecutor, TabCompleter {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        Player target = null;
+        Player target;
         if (!sender.hasPermission("prisons.contraband.give")) {
             sender.sendMessage(Text.color("&cNo permission."));
             return true;
@@ -40,6 +40,8 @@ public class ContrabandCommand implements CommandExecutor, TabCompleter {
             target = Bukkit.getPlayerExact(args[2]);
         } else if (sender instanceof Player player) {
             target = player;
+        } else {
+            target = null;
         }
         if (target == null) {
             sender.sendMessage(Text.color("&cPlayer not found."));
@@ -63,7 +65,11 @@ public class ContrabandCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             stack.setAmount(Math.min(remaining, stack.getMaxStackSize()));
-            target.getInventory().addItem(stack);
+            if (this.contrabandService.getPlugin().getStashService() != null) {
+                this.contrabandService.getPlugin().getStashService().giveOrStash(target, stack);
+            } else {
+                target.getInventory().addItem(stack).values().forEach(item -> target.getWorld().dropItemNaturally(target.getLocation(), item));
+            }
             remaining -= stack.getAmount();
         }
         sender.sendMessage(Text.color("&aGave " + amount + "x " + id + " to " + target.getName()));

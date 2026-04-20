@@ -3,6 +3,7 @@ package org.axial.prisonsCore.hologram;
 import org.axial.prisonsCore.PrisonsCore;
 import org.axial.prisonsCore.util.Text;
 import org.bukkit.Bukkit;
+import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.configuration.ConfigurationSection;
@@ -47,12 +48,29 @@ public class HologramService {
         }
 
         for (String id : section.getKeys(false)) {
-            Location loc = section.getLocation(id + ".location");
-            List<String> lines = section.getStringList(id + ".lines");
-            if (loc != null) {
-                Hologram hologram = new Hologram(id, loc, lines);
-                holograms.put(id, hologram);
+            ConfigurationSection holoSection = section.getConfigurationSection(id);
+            if (holoSection == null) {
+                continue;
             }
+            List<String> lines = holoSection.getStringList("lines");
+            String worldName = holoSection.getString("world");
+            double x = holoSection.getDouble("x", Double.NaN);
+            double y = holoSection.getDouble("y", Double.NaN);
+            double z = holoSection.getDouble("z", Double.NaN);
+            if (Double.isNaN(x) || Double.isNaN(y) || Double.isNaN(z)) {
+                Location loc = section.getLocation(id + ".location");
+                if (loc == null) {
+                    continue;
+                }
+                if (loc.getWorld() != null) {
+                    worldName = loc.getWorld().getName();
+                }
+                x = loc.getX();
+                y = loc.getY();
+                z = loc.getZ();
+            }
+            Hologram hologram = new Hologram(id, worldName, x, y, z, lines);
+            holograms.put(id, hologram);
         }
         this.initialized = true;
     }
@@ -63,8 +81,12 @@ public class HologramService {
         }
         config.set("holograms", null);
         for (Hologram holo : holograms.values()) {
-            config.set("holograms." + holo.getId() + ".location", holo.getLocation());
-            config.set("holograms." + holo.getId() + ".lines", holo.getLines());
+            String base = "holograms." + holo.getId();
+            config.set(base + ".world", holo.getWorldName());
+            config.set(base + ".x", holo.getX());
+            config.set(base + ".y", holo.getY());
+            config.set(base + ".z", holo.getZ());
+            config.set(base + ".lines", holo.getLines());
         }
         try {
             config.save(file);
@@ -76,6 +98,17 @@ public class HologramService {
     public void spawnAll() {
         for (Hologram holo : holograms.values()) {
             spawn(holo);
+        }
+    }
+
+    public void spawnLoadedWorld(World world) {
+        if (world == null) {
+            return;
+        }
+        for (Hologram holo : holograms.values()) {
+            if (world.getName().equalsIgnoreCase(holo.getWorldName())) {
+                spawn(holo);
+            }
         }
     }
 
@@ -94,6 +127,8 @@ public class HologramService {
             td.text(Text.component(String.join("\n", holo.getLines())));
             td.setBillboard(Display.Billboard.CENTER);
             td.setShadowed(true);
+            td.setDefaultBackground(false);
+            td.setBackgroundColor(Color.fromARGB(0));
             td.setBrightness(new Display.Brightness(15, 15));
             td.setPersistent(true);
         });

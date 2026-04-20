@@ -11,6 +11,8 @@
 package org.axial.prisonsCore.command;
 
 import org.axial.prisonsCore.service.TeleportService;
+import org.axial.prisonsCore.service.PlayerToggleService;
+import org.axial.prisonsCore.service.PlayerToggleService.Toggle;
 import org.axial.prisonsCore.util.Text;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -21,9 +23,11 @@ import org.bukkit.entity.Player;
 public class TpaCommand
 implements CommandExecutor {
     private final TeleportService teleportService;
+    private final PlayerToggleService toggleService;
 
-    public TpaCommand(TeleportService teleportService) {
+    public TpaCommand(TeleportService teleportService, PlayerToggleService toggleService) {
         this.teleportService = teleportService;
+        this.toggleService = toggleService;
     }
 
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -45,10 +49,13 @@ implements CommandExecutor {
             sender.sendMessage(Text.color("&cYou can't send a request to yourself."));
             return true;
         }
+        if (this.toggleService != null && !this.toggleService.isEnabled(target, Toggle.TPA_REQUESTS)) {
+            sender.sendMessage(Text.color("&c" + target.getName() + " is not recieving tpa requests right now."));
+            return true;
+        }
         if (!this.teleportService.sendTpa(player, target)) {
             sender.sendMessage(Text.color("&cCould not send request (player may have toggled)."));
         }
         return true;
     }
 }
-

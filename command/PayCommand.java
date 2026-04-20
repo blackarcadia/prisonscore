@@ -11,7 +11,10 @@
 package org.axial.prisonsCore.command;
 
 import org.axial.prisonsCore.service.EconomyService;
+import org.axial.prisonsCore.service.PlayerToggleService;
+import org.axial.prisonsCore.service.PlayerToggleService.Toggle;
 import org.axial.prisonsCore.util.Lang;
+import org.axial.prisonsCore.util.Text;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -21,9 +24,11 @@ import org.bukkit.entity.Player;
 public class PayCommand
 implements CommandExecutor {
     private final EconomyService economyService;
+    private final PlayerToggleService toggleService;
 
-    public PayCommand(EconomyService economyService) {
+    public PayCommand(EconomyService economyService, PlayerToggleService toggleService) {
         this.economyService = economyService;
+        this.toggleService = toggleService;
     }
 
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -43,6 +48,10 @@ implements CommandExecutor {
         }
         if (target.equals((Object)player)) {
             sender.sendMessage(Lang.msg("economy.pay-self", "&cYou cannot pay yourself."));
+            return true;
+        }
+        if (this.toggleService != null && !this.toggleService.isEnabled(target, Toggle.PAY_REQUESTS)) {
+            sender.sendMessage(Text.color("&c" + target.getName() + " is not accepting pay requests right now."));
             return true;
         }
         Double parsed = this.economyService.parseAmount(args[1]);
@@ -65,4 +74,3 @@ implements CommandExecutor {
         return true;
     }
 }
-
