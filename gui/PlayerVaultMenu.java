@@ -113,31 +113,18 @@ public class PlayerVaultMenu implements Listener {
         if (!(event.getView().getTopInventory().getHolder() instanceof VaultHolder holder)) {
             return;
         }
-        if (holder.adminView) {
-            event.setCancelled(true);
-            return;
-        }
         if (!(event.getWhoClicked() instanceof Player player)) {
             return;
         }
-        if (!player.getUniqueId().equals(holder.viewerId) || !player.getUniqueId().equals(holder.ownerId)) {
+        if (!holder.adminView && (!player.getUniqueId().equals(holder.viewerId) || !player.getUniqueId().equals(holder.ownerId))) {
             event.setCancelled(true);
         }
     }
 
     @EventHandler(ignoreCancelled = true)
     public void onVaultDrag(InventoryDragEvent event) {
-        if (!(event.getView().getTopInventory().getHolder() instanceof VaultHolder holder)) {
+        if (!(event.getView().getTopInventory().getHolder() instanceof VaultHolder)) {
             return;
-        }
-        if (!holder.adminView) {
-            return;
-        }
-        for (int rawSlot : event.getRawSlots()) {
-            if (rawSlot < event.getView().getTopInventory().getSize()) {
-                event.setCancelled(true);
-                return;
-            }
         }
     }
 
@@ -165,7 +152,7 @@ public class PlayerVaultMenu implements Listener {
         lore.add(adminView ? "&7Viewing vaults owned by &f" + this.ownerName(owner) : "&7Select a player vault to open.");
         lore.add("&7Available vaults: &f" + count);
         if (adminView) {
-            lore.add("&cAdmin view is read-only.");
+            lore.add("&7You can edit and save this vault.");
         } else {
             lore.add("&7Closing a vault returns here.");
         }

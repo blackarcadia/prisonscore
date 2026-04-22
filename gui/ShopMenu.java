@@ -172,6 +172,7 @@ public class ShopMenu implements Listener {
             return;
         }
         double total = worth * (double)removed;
+        total = this.economyService.applySellBoost(total);
         this.economyService.deposit(player, total);
         player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.0f);
         player.sendMessage(Text.color("&aSold " + removed + "x " + this.prettyName(shopItem.material) + " &afor &2" + this.economyService.format(total)));
@@ -203,7 +204,12 @@ public class ShopMenu implements Listener {
                 player.sendMessage(Text.color("&cThat pickaxe is not configured."));
                 return;
             }
-            player.getInventory().addItem(this.pickaxeManager.createPickaxe(type, 0));
+            ItemStack pickaxe = this.pickaxeManager.createPickaxe(type, 0);
+            if (this.pickaxeManager.getPlugin().getStashService() != null) {
+                this.pickaxeManager.getPlugin().getStashService().giveOrStash(player, pickaxe);
+            } else {
+                player.getInventory().addItem(pickaxe).values().forEach(stack -> player.getWorld().dropItemNaturally(player.getLocation(), stack));
+            }
             player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.0f);
             player.sendMessage(Text.color("&aPurchased " + Text.strip(type.getDisplayName()) + " &afor &2" + this.economyService.format(price)));
             return;

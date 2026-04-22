@@ -94,6 +94,14 @@ public class CellGuardService {
     private BukkitTask monitorTask;
     private boolean skinWarningLogged = false;
 
+    // =========================
+// RAID SYSTEM
+// =========================
+    private final Map<String, Set<UUID>> activeRaids = new HashMap<>();
+    private final Map<UUID, Long> raiderTimeout = new HashMap<>();
+
+    private static final long RAID_TIMEOUT = 60_000L; // 60 seconds
+
     public CellGuardService(PrisonsCore plugin, CellService cellService) {
         this.plugin = plugin;
         this.cellService = cellService;
@@ -108,9 +116,62 @@ public class CellGuardService {
     }
 
     public void shutdown() {
+
         if (this.monitorTask != null) {
             this.monitorTask.cancel();
+            this.monitorTask = null;
         }
+
+        // =========================
+        // 🔥 FORCE ALL CELL GUARDS HOME
+        // =========================
+        for (Placement placement : new HashSet<>(this.placements.values())) {
+
+            if (placement == null) continue;
+
+            UUID npcId = placement.npc();
+            if (npcId == null) continue;
+
+            Entity guard = Bukkit.getEntity(npcId);
+            Location home = placement.home();
+
+            if (guard == null || home == null) continue;
+
+            try {
+                // stop navigation (if chasing player)
+                this.stopNavigation(guard);
+            } catch (Exception ignored) {}
+
+            try {
+                // teleport back to anchor location
+                guard.teleport(home);
+            } catch (Exception ignored) {}
+
+            try {
+                // optional: reset health cleanly
+                if (guard instanceof LivingEntity living) {
+                    double max = living.getAttribute(Attribute.MAX_HEALTH) != null
+                            ? living.getAttribute(Attribute.MAX_HEALTH).getBaseValue()
+                            : living.getMaxHealth();
+
+                    living.setHealth(Math.min(max, living.getMaxHealth()));
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // =========================
+        // 🧹 CLEAR ACTIVE TARGETING
+        // =========================
+        this.guardTargets.clear();
+        this.activeRaiders.clear();
+
+        // =========================
+        // 🧹 CLEAN TEMP MAPS
+        // =========================
+        this.guardEquipReadyAt.clear();
+        this.guardPendingHealth.clear();
+        this.guardHealthReadyAt.clear();
+        this.guardPhaseReadyAt.clear();
     }
 
     public Placement getPlacement(UUID placementId) {
@@ -129,6 +190,21 @@ public class CellGuardService {
         meta.getPersistentDataContainer().set(Keys.cellGuardTier(this.plugin), PersistentDataType.STRING, tier.name());
         item.setItemMeta(meta);
         return item;
+    }
+
+    private void startRaid(String cellId, Player attacker) {
+
+        cellId = cellId.toLowerCase();
+
+        this.activeRaids.computeIfAbsent(cellId, k -> new HashSet<>())
+                .add(attacker.getUniqueId());
+
+        this.raiderTimeout.put(attacker.getUniqueId(), System.currentTimeMillis() + RAID_TIMEOUT);
+
+        this.markRaider(attacker.getUniqueId(), cellId);
+
+        // alert guards instantly
+        this.triggerGuards(cellId, attacker, attacker.getLocation());
     }
 
     public boolean isGuardAnchor(ItemStack stack) {
@@ -216,42 +292,31 @@ public class CellGuardService {
     }
 
     public void handleDoorRaid(Cell cell, Player attacker) {
-        if (cell == null || attacker == null) {
-            return;
-        }
-        if (cell.getOwner() == null) {
-            return;
-        }
-        if (this.cellService.hasAccess(cell, attacker.getUniqueId())) {
-            return;
-        }
-        if (!this.cellService.isCellBuster(attacker.getInventory().getItemInMainHand()) && !this.cellService.isCellBuster(attacker.getInventory().getItemInOffHand())) {
-            return;
-        }
-        String cellId = cell.getId().toLowerCase(Locale.ROOT);
-        this.markRaider(attacker.getUniqueId(), cellId);
-        this.triggerGuards(cellId, attacker, attacker.getLocation());
+
+        if (cell == null || attacker == null) return;
+        if (cell.getOwner() == null) return;
+
+        if (this.cellService.hasAccess(cell, attacker.getUniqueId())) return;
+
+        if (!this.cellService.isCellBuster(attacker.getInventory().getItemInMainHand()) &&
+                !this.cellService.isCellBuster(attacker.getInventory().getItemInOffHand())) return;
+
+        this.startRaid(cell.getId(), attacker);
     }
 
     public void handleOccupantAttack(Player attacker, Player victim, Cell cell) {
-        if (attacker == null || victim == null || cell == null) {
-            return;
-        }
-        if (cell.getOwner() == null) {
-            return;
-        }
-        if (!cell.isInside(victim.getLocation())) {
-            return;
-        }
-        if (!victim.getUniqueId().equals(cell.getOwner()) && !cell.getAccess().contains(victim.getUniqueId())) {
-            return;
-        }
-        if (this.cellService.hasAccess(cell, attacker.getUniqueId())) {
-            return;
-        }
-        String cellId = cell.getId().toLowerCase(Locale.ROOT);
-        this.markRaider(attacker.getUniqueId(), cellId);
-        this.triggerGuards(cellId, attacker, victim.getLocation());
+
+        if (attacker == null || victim == null || cell == null) return;
+        if (cell.getOwner() == null) return;
+
+        if (!cell.isInside(victim.getLocation())) return;
+
+        if (!victim.getUniqueId().equals(cell.getOwner()) &&
+                !cell.getAccess().contains(victim.getUniqueId())) return;
+
+        if (this.cellService.hasAccess(cell, attacker.getUniqueId())) return;
+
+        this.startRaid(cell.getId(), attacker);
     }
 
     public void handlePlayerMove(Player player, Location to) {
@@ -272,22 +337,20 @@ public class CellGuardService {
     }
 
     public void handlePlayerQuit(Player player) {
-        if (player == null) {
-            return;
-        }
-        String cellId = this.activeRaiders.remove(player.getUniqueId());
+        if (player == null) return;
+
+        String cellId = this.activeRaiders.get(player.getUniqueId());
         if (cellId != null) {
-            this.sendHomeForPlayer(player.getUniqueId());
+            this.endRaidForPlayer(player.getUniqueId(), cellId);
         }
     }
 
     public void handlePlayerDeath(Player player) {
-        if (player == null) {
-            return;
-        }
-        String cellId = this.activeRaiders.remove(player.getUniqueId());
+        if (player == null) return;
+
+        String cellId = this.activeRaiders.get(player.getUniqueId());
         if (cellId != null) {
-            this.sendHomeForPlayer(player.getUniqueId());
+            this.endRaidForPlayer(player.getUniqueId(), cellId);
         }
     }
 
@@ -424,12 +487,51 @@ public class CellGuardService {
         this.activeRaiders.remove(playerId);
     }
 
+    private void endRaidForPlayer(UUID playerId, String cellId) {
+
+        this.sendHomeForPlayer(playerId);
+
+        this.activeRaiders.remove(playerId);
+        this.raiderTimeout.remove(playerId);
+
+        Set<UUID> set = this.activeRaids.get(cellId);
+        if (set != null) {
+            set.remove(playerId);
+
+            if (set.isEmpty()) {
+                this.activeRaids.remove(cellId);
+
+                // send ALL guards home
+                Set<UUID> guards = this.placementsByCell.get(cellId);
+                if (guards != null) {
+                    for (UUID pid : guards) {
+                        Placement placement = this.placements.get(pid);
+                        if (placement == null) continue;
+
+                        Entity guard = Bukkit.getEntity(placement.npc());
+                        this.sendGuardHome(placement, guard);
+                    }
+                }
+            }
+        }
+    }
+
     private void startMonitor() {
         if (this.monitorTask != null) {
             this.monitorTask.cancel();
         }
         this.monitorTask = this.plugin.getServer().getScheduler().runTaskTimer((Plugin)this.plugin, () -> {
-            for (UUID guardId : new HashSet<UUID>(this.npcToPlacement.keySet())) {
+            long now = System.currentTimeMillis();
+            for (UUID raider : new HashSet<>(this.raiderTimeout.keySet())) {
+                Long timeout = this.raiderTimeout.get(raider);
+                if (timeout != null && now > timeout) {
+                    String cellId = this.activeRaiders.get(raider);
+                    if (cellId != null) {
+                        this.endRaidForPlayer(raider, cellId);
+                    }
+                }
+            }
+            for (UUID guardId : new HashSet<>(this.npcToPlacement.keySet())) {
                 Player reacquire;
                 LivingEntity living;
                 Placement placement;
@@ -615,34 +717,103 @@ public class CellGuardService {
     }
 
     private void spawnGuardForPlacement(Placement placement) {
-        Entity npc;
+
         if (placement == null) {
             return;
         }
+
+        Location home = placement.home();
+
+        // =========================
+        // 🚫 HARD DUPLICATE BLOCK (tracked)
+        // =========================
         if (placement.npc() != null) {
-            Entity old = Bukkit.getEntity((UUID)placement.npc());
+            Entity existing = Bukkit.getEntity(placement.npc());
+
+            if (existing instanceof LivingEntity living && !existing.isDead()) {
+                this.npcToPlacement.put(existing.getUniqueId(), placement.id());
+                return; // already exists → don't spawn
+            }
+        }
+
+        // =========================
+        // 🚫 HARD DUPLICATE BLOCK (world scan)
+        // =========================
+        for (Entity entity : home.getWorld().getEntities()) {
+            if (!(entity instanceof LivingEntity living)) continue;
+            if (entity.isDead()) continue;
+
+            // check if this is already a cell guard
+            if (!this.isCellGuard(entity)) continue;
+
+            UUID existingPlacementId = this.npcToPlacement.get(entity.getUniqueId());
+
+            // match same placement OR same location
+            if (existingPlacementId != null && existingPlacementId.equals(placement.id())) {
+                placement.setNpcId(entity.getUniqueId());
+                this.npcToPlacement.put(entity.getUniqueId(), placement.id());
+                return;
+            }
+
+            // fallback: location match
+            Location existingLoc = entity.getLocation();
+            if (!existingLoc.getWorld().equals(home.getWorld())) continue;
+            if (existingLoc.distanceSquared(home) > 0.25) continue;
+
+            placement.setNpcId(entity.getUniqueId());
+            this.npcToPlacement.put(entity.getUniqueId(), placement.id());
+            return;
+        }
+
+        // =========================
+        // 🧹 CLEAN OLD IF EXISTS
+        // =========================
+        if (placement.npc() != null) {
+            Entity old = Bukkit.getEntity(placement.npc());
             this.destroyNpc(old);
+
             if (old != null) {
                 old.remove();
             }
+
             this.npcToPlacement.remove(placement.npc());
             this.guardTargets.remove(placement.npc());
         }
-        if (!((npc = this.createCitizensNPC(placement.home(), Text.color(placement.tier().displayName()))) instanceof LivingEntity)) {
+
+        // =========================
+        // ✅ SAFE SPAWN
+        // =========================
+        Entity npc = this.createCitizensNPC(home, Text.color(placement.tier().displayName()));
+
+        if (!(npc instanceof LivingEntity living)) {
             this.plugin.getLogger().warning("Failed to spawn cell guard for cell " + placement.cellId());
             return;
         }
-        LivingEntity living = (LivingEntity)npc;
-        this.applyFacing((Entity)living, placement.home());
+
+        this.applyFacing(living, home);
         living.setRemoveWhenFarAway(false);
-        this.ensureUnprotected((Entity)living);
+        this.ensureUnprotected(living);
+
         this.scheduleHealthApply(living, placement.tier());
         this.updateGuardName(living, placement.tier());
-        living.getPersistentDataContainer().set(Keys.cellGuardPlacement(this.plugin), PersistentDataType.STRING, placement.id().toString());
-        placement.setNpcId(npc.getUniqueId());
-        this.npcToPlacement.put(npc.getUniqueId(), placement.id());
-        this.scheduleSkinApplications(npc);
-        this.plugin.getServer().getScheduler().runTaskLater((Plugin)this.plugin, () -> this.equipGuard(living, placement.tier()), 5L);
+
+        living.getPersistentDataContainer().set(
+                Keys.cellGuardPlacement(this.plugin),
+                PersistentDataType.STRING,
+                placement.id().toString()
+        );
+
+        placement.setNpcId(living.getUniqueId());
+        this.npcToPlacement.put(living.getUniqueId(), placement.id());
+
+        this.scheduleSkinApplications(living);
+
+        this.plugin.getServer().getScheduler().runTaskLater(
+                this.plugin,
+                () -> this.equipGuard(living, placement.tier()),
+                5L
+        );
+
         this.guardEquipReadyAt.put(living.getUniqueId(), System.currentTimeMillis() + 250L);
     }
 

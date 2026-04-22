@@ -273,7 +273,11 @@ implements Listener {
         for (int i = 0; i <= 44; ++i) {
             ItemStack it = session.inv.getItem(i);
             if (this.shardService.isShard(it)) {
-                player.getInventory().addItem(new ItemStack[]{it.clone()});
+                if (this.plugin.getStashService() != null) {
+                    this.plugin.getStashService().giveOrStash(player, it.clone());
+                } else {
+                    player.getInventory().addItem(new ItemStack[]{it.clone()});
+                }
             }
             session.inv.setItem(i, this.pane(Material.GRAY_STAINED_GLASS_PANE));
         }
@@ -292,11 +296,15 @@ implements Listener {
     private void deliverQueued(Session session, Player player) {
         for (PendingGive give : session.pendingGives) {
             if (!give.playerId.equals(player.getUniqueId())) continue;
-            player.getInventory().addItem(new ItemStack[]{give.item.clone()});
+            if (this.plugin.getStashService() != null) {
+                this.plugin.getStashService().giveOrStash(player, give.item.clone());
+            } else {
+                player.getInventory().addItem(new ItemStack[]{give.item.clone()});
+            }
         }
         for (PendingSell sell : session.pendingAutoSell) {
             if (!sell.playerId.equals(player.getUniqueId())) continue;
-            double total = sell.worthEach * (double)sell.item.getAmount();
+            double total = this.economyService.applySellBoost(sell.worthEach * (double)sell.item.getAmount());
             this.economyService.deposit(player, total);
             player.sendMessage(Text.color("&aSold &f" + sell.item.getAmount() + "x " + sell.item.getType().name() + " &7for &a" + this.economyService.format(total)));
         }
@@ -361,7 +369,11 @@ implements Listener {
             target = Bukkit.getPlayer((UUID)ownerId);
         }
         if (target != null) {
-            target.getInventory().addItem(new ItemStack[]{reward.clone()});
+            if (this.plugin.getStashService() != null) {
+                this.plugin.getStashService().giveOrStash(target, reward.clone());
+            } else {
+                target.getInventory().addItem(new ItemStack[]{reward.clone()});
+            }
             this.playWinSoundOnce(target, session);
             target.sendMessage(Text.color("&aYou received: &f" + reward.getType().name()));
         } else {

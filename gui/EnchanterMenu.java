@@ -300,6 +300,12 @@ implements Listener {
             session.returning = false;
             return;
         }
+        if (isGear && !enchant.isApplicableTo(pickaxe.getType())) {
+            player.sendMessage(Text.color("&cThat enchant cannot be applied to this item."));
+            session.pending = false;
+            session.returning = false;
+            return;
+        }
         session.pending = true;
         session.selectedSlot = slot;
         this.fillSlotsWithPane(session.inventory, slot, Material.LIGHT_GRAY_STAINED_GLASS_PANE);
@@ -321,6 +327,7 @@ implements Listener {
                         this.gearManager.repair(pickaxe);
                     }
                     this.gearManager.applyEnchant(pickaxe, enchant.getId(), level, enchant.getMaxLevel());
+                    this.gearManager.levelUp(pickaxe);
                 }
                 player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.0f);
                 this.setPane(session.inventory, session.selectedSlot, Material.LIME_STAINED_GLASS_PANE);
@@ -340,9 +347,10 @@ implements Listener {
                 this.cellBusterManager.levelUp(pickaxe);
                 this.cellBusterManager.setEnergy(pickaxe, 0);
             } else {
-                if (!brokenGear) {
-                    this.gearManager.setEnergy(pickaxe, 0);
-                }
+                int maxEnergy = this.gearManager.getMaxEnergy(pickaxe);
+                int currentEnergy = this.gearManager.getEnergy(pickaxe);
+                int remaining = Math.max(0, currentEnergy - maxEnergy);
+                this.gearManager.setEnergy(pickaxe, remaining);
                 this.gearManager.updateLore(pickaxe);
             }
             session.enchantChosen = true;
@@ -435,7 +443,7 @@ implements Listener {
             session.brokenGear = true;
             return;
         }
-        List<CustomEnchant> pool = isCellBuster ? this.enchantService.getAll().stream().filter(ce -> ce.getId().equalsIgnoreCase("buster_efficiency")).collect(Collectors.toList()) : (isPickaxe ? this.enchantService.getAll().stream().filter(ce -> !ce.getId().equalsIgnoreCase("buster_efficiency")).collect(Collectors.toList()) : this.gearEnchantService.getAll());
+        List<CustomEnchant> pool = isCellBuster ? this.enchantService.getAll().stream().filter(ce -> ce.getId().equalsIgnoreCase("buster_efficiency")).collect(Collectors.toList()) : (isPickaxe ? this.enchantService.getAll().stream().filter(ce -> !ce.getId().equalsIgnoreCase("buster_efficiency")).collect(Collectors.toList()) : this.gearEnchantService.getAll().stream().filter(ce -> ce.isApplicableTo(center.getType())).collect(Collectors.toList()));
         List<CustomEnchant> candidates = pool.stream().filter(ce -> current.getOrDefault(ce.getId(), 0) < ce.getMaxLevel()).collect(Collectors.toList());
         List<CustomEnchant> options = isCellBuster || isPickaxe ? this.enchantService.pickRandomOptions(Math.min(OPTION_SLOTS.length, candidates.size()), candidates) : this.gearEnchantService.pickRandomOptions(Math.min(OPTION_SLOTS.length, candidates.size()), candidates);
         if (options.isEmpty() && !candidates.isEmpty()) {
