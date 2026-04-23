@@ -106,24 +106,154 @@ public class CellGuardService {
         this.plugin = plugin;
         this.cellService = cellService;
         this.dataFile = new File(plugin.getDataFolder(), "cell-guards.yml");
+
         this.initFile();
-        this.load();
+
+        // safe startup order:
+        // 1) load placements
+        // 2) link already-existing guards
+        // 3) respawn only missing guards
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            this.load();
+            this.linkExistingGuards();
+
+
+
+// 🔥 ADD THIS LINE RIGHT HERE
+            this.cleanupOrphanGuards();
+
+            this.respawnAllGuards();
+
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                this.linkExistingGuards();
+
+                Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                    this.respawnAllGuards();
+                }, 40L);
+
+            }, 40L);
+
+        }, 40L);
+
         this.startMonitor();
     }
+    private void linkExistingGuards() {
 
+        plugin.getLogger().info("[CellGuards] Linking existing guards...");
+
+        for (Placement placement : new HashSet<>(this.placements.values())) {
+
+            if (placement == null) continue;
+
+            UUID placementId = placement.id();
+
+            for (World world : Bukkit.getWorlds()) {
+                for (Entity entity : world.getEntities()) {
+
+                    if (!(entity instanceof LivingEntity living)) continue;
+                    if (entity.isDead()) continue;
+
+                    if (!this.isCellGuard(entity)) continue;
+
+                    String stored = living.getPersistentDataContainer().get(
+                            Keys.cellGuardPlacement(this.plugin),
+                            PersistentDataType.STRING
+                    );
+
+                    if (stored == null) continue;
+
+                    if (stored.equalsIgnoreCase(placementId.toString())) {
+
+                        placement.setNpcId(living.getUniqueId());
+                        this.npcToPlacement.put(living.getUniqueId(), placementId);
+
+                        break;
+                    }
+                }
+            }
+        }
+
+        plugin.getLogger().info("[CellGuards] Linking complete.");
+    }
+    private void respawnAllGuards() {
+
+        plugin.getLogger().info("[CellGuards] Respawning guards...");
+
+        for (Placement placement : new HashSet<>(this.placements.values())) {
+
+            if (placement == null) continue;
+
+            try {
+                UUID placementId = placement.id();
+
+                LivingEntity found = null;
+
+                // =========================
+                // ✅ CHECK CITIZENS NPC REGISTRY
+                // =========================
+                try {
+                    Class<?> citizensApi = Class.forName("net.citizensnpcs.api.CitizensAPI");
+                    Object registry = citizensApi.getMethod("getNPCRegistry").invoke(null);
+
+                    for (Object npc : (Iterable<?>) registry.getClass().getMethod("sorted").invoke(registry)) {
+
+                        Entity entity = (Entity) npc.getClass().getMethod("getEntity").invoke(npc);
+                        if (!(entity instanceof LivingEntity living)) continue;
+
+                        String stored = living.getPersistentDataContainer().get(
+                                Keys.cellGuardPlacement(this.plugin),
+                                PersistentDataType.STRING
+                        );
+
+                        if (stored == null) continue;
+
+                        if (stored.equalsIgnoreCase(placementId.toString())) {
+                            found = living;
+                            break;
+                        }
+                    }
+
+                } catch (Exception ignored) {}
+
+                // =========================
+                // ✅ FOUND → RELINK ONLY
+                // =========================
+                if (found != null) {
+                    placement.setNpcId(found.getUniqueId());
+                    this.npcToPlacement.put(found.getUniqueId(), placementId);
+                    continue;
+                }
+
+                // =========================
+                // ❌ NOT FOUND → SPAWN
+                // =========================
+                placement.setNpcId(null);
+                this.spawnGuardForPlacement(placement);
+
+            } catch (Exception e) {
+                plugin.getLogger().warning("[CellGuards] Failed to respawn guard "
+                        + placement.id() + ": " + e.getMessage());
+            }
+        }
+
+        plugin.getLogger().info("[CellGuards] Respawn complete.");
+    }
     public PrisonsCore getPlugin() {
         return this.plugin;
     }
 
     public void shutdown() {
 
+        // =========================
+        // ⏹ STOP TASKS
+        // =========================
         if (this.monitorTask != null) {
             this.monitorTask.cancel();
             this.monitorTask = null;
         }
 
         // =========================
-        // 🔥 FORCE ALL CELL GUARDS HOME
+        // 🏠 SEND ALL GUARDS HOME (SAFE RESET)
         // =========================
         for (Placement placement : new HashSet<>(this.placements.values())) {
 
@@ -138,17 +268,14 @@ public class CellGuardService {
             if (guard == null || home == null) continue;
 
             try {
-                // stop navigation (if chasing player)
                 this.stopNavigation(guard);
             } catch (Exception ignored) {}
 
             try {
-                // teleport back to anchor location
                 guard.teleport(home);
             } catch (Exception ignored) {}
 
             try {
-                // optional: reset health cleanly
                 if (guard instanceof LivingEntity living) {
                     double max = living.getAttribute(Attribute.MAX_HEALTH) != null
                             ? living.getAttribute(Attribute.MAX_HEALTH).getBaseValue()
@@ -160,18 +287,28 @@ public class CellGuardService {
         }
 
         // =========================
-        // 🧹 CLEAR ACTIVE TARGETING
+        // 🧹 CLEAR RUNTIME STATE
         // =========================
         this.guardTargets.clear();
         this.activeRaiders.clear();
+        this.raiderTimeout.clear();
 
-        // =========================
-        // 🧹 CLEAN TEMP MAPS
-        // =========================
         this.guardEquipReadyAt.clear();
         this.guardPendingHealth.clear();
         this.guardHealthReadyAt.clear();
         this.guardPhaseReadyAt.clear();
+
+        // =========================
+        // 💾 SAVE EVERYTHING (CRITICAL FIX)
+        // =========================
+        Bukkit.getScheduler().runTask(this.plugin, () -> {
+            try {
+                this.save();
+                this.plugin.getLogger().info("[CellGuards] Saved guard data on shutdown.");
+            } catch (Exception e) {
+                this.plugin.getLogger().warning("[CellGuards] Failed to save guard data: " + e.getMessage());
+            }
+        });
     }
 
     public Placement getPlacement(UUID placementId) {
@@ -647,74 +784,153 @@ public class CellGuardService {
     }
 
     private void load() {
+
+        this.dataCfg = YamlConfiguration.loadConfiguration(this.dataFile);
+
         this.placements.clear();
         this.placementsByCell.clear();
         this.npcToPlacement.clear();
-        this.guardTargets.clear();
-        this.activeRaiders.clear();
-        ConfigurationSection cellsSec = this.dataCfg.getConfigurationSection("cells");
-        if (cellsSec == null) {
+
+        ConfigurationSection sec = this.dataCfg.getConfigurationSection("guards");
+        if (sec == null) {
+            plugin.getLogger().warning("[CellGuards] No guards section found.");
             return;
         }
-        for (String cellId : cellsSec.getKeys(false)) {
-            ConfigurationSection placementsSec = cellsSec.getConfigurationSection(cellId + ".placements");
-            if (placementsSec == null) continue;
-            for (String idStr : placementsSec.getKeys(false)) {
-                UUID placementId;
-                CellGuardTier tier;
-                ConfigurationSection pSec = placementsSec.getConfigurationSection(idStr);
-                if (pSec == null) continue;
-                String tierName = pSec.getString("tier");
-                try {
-                    tier = CellGuardTier.valueOf(tierName);
-                }
-                catch (Exception e) {
+
+        for (String key : sec.getKeys(false)) {
+            try {
+                ConfigurationSection g = sec.getConfigurationSection(key);
+                if (g == null) continue;
+
+                UUID id = UUID.fromString(key);
+
+                String cellId = g.getString("cell");
+                String tierName = g.getString("tier");
+
+                String worldName = g.getString("world");
+                double x = g.getDouble("x");
+                double y = g.getDouble("y");
+                double z = g.getDouble("z");
+
+                if (cellId == null || tierName == null || worldName == null) {
+                    plugin.getLogger().warning("[CellGuards] Invalid guard data for " + key);
                     continue;
                 }
-                String worldName = pSec.getString("world");
-                World world = Bukkit.getWorld((String)worldName);
-                if (world == null) continue;
-                double x = pSec.getDouble("x");
-                double y = pSec.getDouble("y");
-                double z = pSec.getDouble("z");
-                float yaw = (float)pSec.getDouble("yaw");
-                float pitch = (float)pSec.getDouble("pitch");
-                try {
-                    placementId = UUID.fromString(idStr);
+
+                World world = Bukkit.getWorld(worldName);
+                if (world == null) {
+                    plugin.getLogger().warning("[CellGuards] World not found: " + worldName);
+                    continue;
                 }
-                catch (IllegalArgumentException e) {
-                    placementId = UUID.randomUUID();
-                }
-                Placement placement = new Placement(placementId, cellId, tier, new Location(world, x, y, z, yaw, pitch));
-                this.placements.put(placementId, placement);
-                this.placementsByCell.computeIfAbsent(cellId.toLowerCase(Locale.ROOT), k -> new HashSet()).add(placementId);
-                this.spawnGuardForPlacement(placement);
+
+                Location home = new Location(world, x, y, z);
+
+                CellGuardTier tier = CellGuardTier.valueOf(tierName);
+
+                Placement placement = new Placement(id, cellId, tier, home);
+
+                // ✅ ADD TO MAIN MAP
+                this.placements.put(id, placement);
+
+                // ✅ ADD TO CELL MAP (CRITICAL)
+                this.placementsByCell
+                        .computeIfAbsent(cellId.toLowerCase(Locale.ROOT), k -> new HashSet<>())
+                        .add(id);
+
+            } catch (Exception e) {
+                plugin.getLogger().warning("[CellGuards] Failed to load guard " + key + ": " + e.getMessage());
             }
         }
+
+        plugin.getLogger().info("[CellGuards] Loaded " + placements.size() + " guards.");
+        plugin.getLogger().info("Loaded guards: " + this.placements.size());
+        this.rebindOrRespawnGuards();
     }
 
-    private void save() {
-        this.dataCfg.set("cells", null);
-        for (Placement placement : this.placements.values()) {
-            String base = "cells." + placement.cellId().toLowerCase(Locale.ROOT) + ".placements." + String.valueOf(placement.id());
-            this.dataCfg.set(base + ".tier", (Object)placement.tier().name());
-            Location h = placement.home();
-            if (h.getWorld() != null) {
-                this.dataCfg.set(base + ".world", (Object)h.getWorld().getName());
+    private void rebindOrRespawnGuards() {
+        // =========================
+        // 🔥 REBIND / RESPAWN GUARDS
+        // =========================
+        Bukkit.getScheduler().runTaskLater(this.plugin, () -> {
+
+            for (Placement placement : this.placements.values()) {
+
+                if (placement == null) continue;
+
+                UUID npcId = placement.npc();
+                Entity existing = npcId != null ? Bukkit.getEntity(npcId) : null;
+
+                // =========================
+                // ✅ CASE 1: NPC STILL EXISTS → REBIND
+                // =========================
+                if (existing instanceof LivingEntity living && !existing.isDead()) {
+
+                    this.npcToPlacement.put(existing.getUniqueId(), placement.id());
+                    continue;
+                }
+
+                // =========================
+                // 🚫 CASE 2: CHECK FOR DUPLICATE NEARBY
+                // =========================
+                Location home = placement.home();
+
+                for (Entity entity : home.getWorld().getEntities()) {
+
+                    if (!(entity instanceof LivingEntity living)) continue;
+                    if (entity.isDead()) continue;
+
+                    if (!this.isCellGuard(entity)) continue;
+
+                    Location loc = entity.getLocation();
+
+                    // 🔥 STRICT radius (prevents wrong binding)
+                    if (loc.distanceSquared(home) > 1.0) continue;
+
+                    // found matching guard → bind it
+                    placement.setNpcId(entity.getUniqueId());
+                    this.npcToPlacement.put(entity.getUniqueId(), placement.id());
+
+                    existing = entity;
+                    break;
+                }
+
+                // =========================
+                // ❌ CASE 3: STILL MISSING → RESPAWN
+                // =========================
+                if (existing == null) {
+                    this.spawnGuardForPlacement(placement);
+                }
             }
-            this.dataCfg.set(base + ".x", (Object)h.getX());
-            this.dataCfg.set(base + ".y", (Object)h.getY());
-            this.dataCfg.set(base + ".z", (Object)h.getZ());
-            this.dataCfg.set(base + ".yaw", (Object)Float.valueOf(h.getYaw()));
-            this.dataCfg.set(base + ".pitch", (Object)Float.valueOf(h.getPitch()));
-        }
-        try {
-            this.dataCfg.save(this.dataFile);
-        }
-        catch (IOException e) {
-            this.plugin.getLogger().warning("Failed to save cell-guards.yml: " + e.getMessage());
-        }
+
+        }, 20L); // delay 1 second (VERY IMPORTANT)
     }
+    public void save() {
+
+    if (this.dataCfg == null) return;
+
+    this.dataCfg.set("guards", null);
+
+    for (Placement placement : this.placements.values()) {
+
+        String path = "guards." + placement.id();
+
+        this.dataCfg.set(path + ".cell", placement.cellId());
+        this.dataCfg.set(path + ".tier", placement.tier().name());
+
+        Location l = placement.home();
+
+        this.dataCfg.set(path + ".world", l.getWorld().getName());
+        this.dataCfg.set(path + ".x", l.getX());
+        this.dataCfg.set(path + ".y", l.getY());
+        this.dataCfg.set(path + ".z", l.getZ());
+    }
+
+    try {
+        this.dataCfg.save(this.dataFile);
+    } catch (IOException e) {
+        this.plugin.getLogger().warning("[CellGuards] Failed to save guards: " + e.getMessage());
+    }
+}
 
     private void spawnGuardForPlacement(Placement placement) {
 
@@ -723,6 +939,9 @@ public class CellGuardService {
         }
 
         Location home = placement.home();
+        if (home == null || home.getWorld() == null) {
+            return;
+        }
 
         // =========================
         // 🚫 HARD DUPLICATE BLOCK (tracked)
@@ -730,40 +949,63 @@ public class CellGuardService {
         if (placement.npc() != null) {
             Entity existing = Bukkit.getEntity(placement.npc());
 
-            if (existing instanceof LivingEntity living && !existing.isDead()) {
+            if (existing instanceof LivingEntity && !existing.isDead()) {
+                placement.setNpcId(existing.getUniqueId());
                 this.npcToPlacement.put(existing.getUniqueId(), placement.id());
-                return; // already exists → don't spawn
+                return;
             }
         }
 
         // =========================
-        // 🚫 HARD DUPLICATE BLOCK (world scan)
+        // 🚫 HARD DUPLICATE BLOCK (world scan by placement key first)
         // =========================
         for (Entity entity : home.getWorld().getEntities()) {
             if (!(entity instanceof LivingEntity living)) continue;
             if (entity.isDead()) continue;
-
-            // check if this is already a cell guard
             if (!this.isCellGuard(entity)) continue;
 
-            UUID existingPlacementId = this.npcToPlacement.get(entity.getUniqueId());
+            String stored = living.getPersistentDataContainer().get(
+                    Keys.cellGuardPlacement(this.plugin),
+                    PersistentDataType.STRING
+            );
 
-            // match same placement OR same location
-            if (existingPlacementId != null && existingPlacementId.equals(placement.id())) {
+            if (stored != null && stored.equalsIgnoreCase(placement.id().toString())) {
                 placement.setNpcId(entity.getUniqueId());
                 this.npcToPlacement.put(entity.getUniqueId(), placement.id());
                 return;
             }
+        }
 
-            // fallback: location match
+        // =========================
+        // 🚫 FALLBACK DUPLICATE BLOCK (very close same location)
+        // =========================
+        for (Entity entity : home.getWorld().getEntities()) {
+            if (!(entity instanceof LivingEntity)) continue;
+            if (entity.isDead()) continue;
+            if (!this.isCellGuard(entity)) continue;
+
             Location existingLoc = entity.getLocation();
-            if (!existingLoc.getWorld().equals(home.getWorld())) continue;
+            if (existingLoc.getWorld() == null || !existingLoc.getWorld().equals(home.getWorld())) continue;
             if (existingLoc.distanceSquared(home) > 0.25) continue;
 
             placement.setNpcId(entity.getUniqueId());
             this.npcToPlacement.put(entity.getUniqueId(), placement.id());
             return;
         }
+
+        // =========================
+        // 🧹 CLEAN OLD IF EXISTS
+        // =========================
+        if (placement.npc() != null) {
+            Entity old = Bukkit.getEntity(placement.npc());
+            this.destroyNpc(old);
+
+            if (old != null) {
+                old.remove();
+            }
+        }
+
+        // KEEP THE REST OF YOUR ORIGINAL METHOD BELOW THIS LINE EXACTLY AS IT ALREADY IS
 
         // =========================
         // 🧹 CLEAN OLD IF EXISTS
@@ -805,6 +1047,7 @@ public class CellGuardService {
 
         placement.setNpcId(living.getUniqueId());
         this.npcToPlacement.put(living.getUniqueId(), placement.id());
+        this.save();
 
         this.scheduleSkinApplications(living);
 
@@ -815,6 +1058,58 @@ public class CellGuardService {
         );
 
         this.guardEquipReadyAt.put(living.getUniqueId(), System.currentTimeMillis() + 250L);
+    }
+
+    private void cleanupOrphanGuards() {
+
+        plugin.getLogger().info("[CellGuards] Cleaning orphan guards...");
+
+        for (World world : Bukkit.getWorlds()) {
+            for (Entity entity : world.getEntities()) {
+
+                if (!(entity instanceof LivingEntity living)) continue;
+                if (entity.isDead()) continue;
+
+                if (!this.isCellGuard(entity)) continue;
+
+                String stored = living.getPersistentDataContainer().get(
+                        Keys.cellGuardPlacement(this.plugin),
+                        PersistentDataType.STRING
+                );
+
+                // ❌ No placement tag = definitely orphan → delete
+                if (stored == null) {
+                    entity.remove();
+                    continue;
+                }
+
+                UUID placementId;
+
+                try {
+                    placementId = UUID.fromString(stored);
+                } catch (Exception e) {
+                    entity.remove();
+                    continue;
+                }
+
+                Placement placement = this.placements.get(placementId);
+
+                // ❌ Placement doesn't exist → delete
+                if (placement == null) {
+                    entity.remove();
+                    continue;
+                }
+
+                // ❌ Already linked to another NPC → duplicate → delete
+                if (placement.npc() != null &&
+                        !placement.npc().equals(entity.getUniqueId())) {
+
+                    entity.remove();
+                }
+            }
+        }
+
+        plugin.getLogger().info("[CellGuards] Orphan cleanup complete.");
     }
 
     private Entity createCitizensNPC(Location loc, String name) {
@@ -828,6 +1123,12 @@ public class CellGuardService {
             Method create = npcRegistryClass.getMethod("createNPC", entityTypeClass, String.class);
             Object npc = create.invoke(registry, playerType, Text.color(name));
             this.applyPersistentSkin(npc, npcClass);
+            try {
+                npcClass.getMethod("setPersistent", Boolean.TYPE).invoke(npc, true);
+            }
+            catch (Exception exception) {
+                // empty catch block
+            }
             Method spawn = npcClass.getMethod("spawn", Location.class);
             spawn.invoke(npc, loc);
             try {
